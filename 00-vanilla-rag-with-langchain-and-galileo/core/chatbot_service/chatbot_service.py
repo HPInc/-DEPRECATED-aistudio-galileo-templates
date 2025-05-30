@@ -25,25 +25,15 @@ from galileo_protect import ProtectParser
 # Import base service class from the shared location
 import sys
 import os
+import time
 
 # Add the src directory to the path to import base_service
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../")))
 from src.service.base_service import BaseGenerativeService
+from src.utils import get_context_window, dynamic_retriever, format_docs_with_adaptive_context
 
 # Set up logger
 logger = logging.getLogger(__name__)
-
-def format_docs(docs: List[Document]) -> str:
-    """
-    Format a list of documents into a single string.
-    
-    Args:
-        docs: List of Document objects
-        
-    Returns:
-        String containing the concatenated page content of all documents
-    """
-    return "\n\n".join([doc.page_content for doc in docs if isinstance(doc.page_content, str)])
 
 class ChatbotService(BaseGenerativeService):
     """
@@ -54,7 +44,10 @@ class ChatbotService(BaseGenerativeService):
         """Initialize the chatbot service."""
         super().__init__()
         self.memory = []
-        self.embedding = None
+        self.embedding = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-mpnet-base-v2",
+            cache_folder="/tmp/hf_cache"
+        )
         self.vectordb = None
         self.retriever = None
         self.prompt_str = None
@@ -142,9 +135,15 @@ class ChatbotService(BaseGenerativeService):
             logger.info("Setting up callback manager")
             self.callback_manager = CallbackManager([StreamingStdOutCallbackHandler()])
             
+            # Get model filename to determine context window from lookup table
+            model_filename = os.path.basename(model_path)
+            
+            # Default context window size, will be updated if available in MODEL_CONTEXT_WINDOWS
+            context_window = 4096
+            
             logger.info("Initializing LlamaCpp with the following parameters:")
             logger.info(f"  - Model Path: {model_path}")
-            logger.info(f"  - n_gpu_layers: 30, n_batch: 512, n_ctx: 4096")
+            logger.info(f"  - n_gpu_layers: 30, n_batch: 512, n_ctx: {context_window}")
             logger.info(f"  - max_tokens: 1024, f16_kv: True, temperature: 0.2")
             
             try:
@@ -152,7 +151,7 @@ class ChatbotService(BaseGenerativeService):
                     model_path=model_path,
                     n_gpu_layers=30,
                     n_batch=512,
-                    n_ctx=4096,
+                    n_ctx=context_window,
                     max_tokens=1024,
                     f16_kv=True,
                     callback_manager=self.callback_manager,
@@ -161,7 +160,10 @@ class ChatbotService(BaseGenerativeService):
                     streaming=False,
                     temperature=0.2,
                 )
-                logger.info("LlamaCpp model initialized successfully.")
+                
+                # Store context window in model for later retrieval
+                self.llm.__dict__['_context_window'] = context_window
+                logger.info(f"LlamaCpp model initialized successfully with context window of {context_window} tokens")
             except Exception as model_error:
                 logger.error(f"Failed to initialize LlamaCpp model: {str(model_error)}")
                 logger.error(f"Exception type: {type(model_error).__name__}")
@@ -188,8 +190,17 @@ class ChatbotService(BaseGenerativeService):
         tokenizer = AutoTokenizer.from_pretrained(model_id)
         model = AutoModelForCausalLM.from_pretrained(model_id)
         pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=100, device=0)
-        self.llm = HuggingFacePipeline(pipeline=pipe)        
-        logger.info("Using the local Deep Seek model downloaded from HuggingFace.")
+        self.llm = HuggingFacePipeline(pipeline=pipe)
+        
+        # Set context window explicitly to help with document retrieval (4096 tokens for DeepSeek model)
+        context_window = 4096
+        if hasattr(tokenizer, 'model_max_length') and tokenizer.model_max_length is not None:
+            context_window = tokenizer.model_max_length
+            
+        # Store context window in model for later retrieval  
+        self.llm.__dict__['_context_window'] = context_window
+        
+        logger.info(f"Using the local Deep Seek model downloaded from HuggingFace with context window of {context_window} tokens.")
 
     def load_cloud_hf_model(self, context):
         """
@@ -198,11 +209,17 @@ class ChatbotService(BaseGenerativeService):
         Args:
             context: MLflow model context containing artifacts
         """
+        repo_id = "mistralai/Mistral-7B-Instruct-v0.2"
         self.llm = HuggingFaceEndpoint(
             huggingfacehub_api_token=self.model_config["hf_key"],
-            repo_id="mistralai/Mistral-7B-Instruct-v0.2",
-        )     
-        logger.info("Using the cloud Mistral model on HuggingFace.")
+            repo_id=repo_id,
+        )
+        
+        # Set known context window for Mistral-7B-Instruct-v0.2 (8192 tokens) 
+        context_window = 8192
+        self.llm.__dict__['_context_window'] = context_window
+           
+        logger.info(f"Using the cloud Mistral model on HuggingFace with context window of {context_window} tokens.")
 
     def load_vector_database(self):
         """
@@ -234,20 +251,12 @@ class ChatbotService(BaseGenerativeService):
             splits = text_splitter.split_documents(pdf_data)
             logger.info(f"PDF split into {len(splits)} parts.")
 
-            logger.info("Initializing embedding model...")
-            try:
-                self.embedding = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-mpnet-base-v2",
-                    cache_folder="/tmp/hf_cache"
-                )
-                logger.info("Embedding model loaded successfully.")
-            except Exception as emb_error:
-                logger.error(f"Error loading embedding model: {emb_error}")
-                raise
+            logger.info("Using embedding model initialized during service initialization.")
 
             # Create vector database
             logger.info("Creating vector database...")
             self.vectordb = Chroma.from_documents(documents=splits, embedding=self.embedding)
+            
             self.retriever = self.vectordb.as_retriever()
 
             logger.info("Vector database created successfully.")
@@ -257,9 +266,13 @@ class ChatbotService(BaseGenerativeService):
 
     def load_prompt(self) -> None:
         """Load the prompt template for the chatbot."""
-        self.prompt_str = """You are a virtual assistant for a Data Science platform called AI Studio. Answer the question based on the following context:
+        self.prompt_str = """You are a chatbot assistant for a Data Science platform created by HP, called 'Z by HP AI Studio'. 
+            Do not hallucinate and answer questions only if they are related to 'Z by HP AI Studio'. 
+            Now, answer the question perfectly based on the following context:
+
             {context}
-            Question: {input}
+
+            Question: {query}
             """
         self.prompt = ChatPromptTemplate.from_template(self.prompt_str)
 
@@ -267,17 +280,37 @@ class ChatbotService(BaseGenerativeService):
         """Create the RAG chain using the loaded model, retriever, and prompt."""
         if not self.retriever:
             raise ValueError("Retriever must be initialized before creating the chain")
-
+            
+        # Get model context window
+        context_window = get_context_window(self.llm)
+        logger.info(f"Using model with context window of {context_window} tokens")
+        
         input_normalizer = RunnableLambda(lambda x: {"input": x} if isinstance(x, str) else x)
-        retriever_runnable = RunnableLambda(lambda x: self.retriever.get_relevant_documents(x["input"]))
-        format_docs_r = RunnableLambda(format_docs)
+        
+        # Use dynamic retriever based on context window
+        def context_aware_retrieval(x):
+            return dynamic_retriever(
+                x["input"], 
+                collection=self.vectordb, 
+                context_window=context_window
+            )
+        
+        # Use adaptive context formatter
+        def adaptive_format(docs):
+            return format_docs_with_adaptive_context(
+                docs, 
+                context_window=context_window
+            )
+            
+        retriever_runnable = RunnableLambda(context_aware_retrieval)
+        format_docs_r = RunnableLambda(adaptive_format)
         extract_input = RunnableLambda(lambda x: x["input"])
 
         self.chain = (
             input_normalizer
             | RunnableMap({
                 "context": retriever_runnable | format_docs_r,
-                "input": extract_input
+                "query": extract_input
             })
             | self.prompt
             | self.llm
@@ -341,9 +374,8 @@ class ChatbotService(BaseGenerativeService):
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
             new_splits = text_splitter.split_documents(pdf_data)
 
-            # Create a new vector database with the new document
-            embedding = HuggingFaceEmbeddings()
-            vectordb = Chroma.from_documents(documents=new_splits, embedding=embedding)
+            # Create a new vector database with the new document using the already initialized embedding model
+            vectordb = Chroma.from_documents(documents=new_splits, embedding=self.embedding)
             self.retriever = vectordb.as_retriever()
 
             # Clean up temporary file
@@ -443,14 +475,17 @@ class ChatbotService(BaseGenerativeService):
             Dictionary with response data
         """
         try:
+            # Get the model context window for optimized retrieval
+            context_window = get_context_window(self.llm)
+            
             # Run the query through the protected chain with monitoring
             response = self.protected_chain.invoke(
                 {"input": user_query, "output": ""},
                 config={"callbacks": [self.monitor_handler]}
             )
             
-            # Get relevant documents used in the response
-            relevant_docs = self.retriever.get_relevant_documents(user_query)
+            # Get relevant documents using context-aware retrieval
+            relevant_docs = dynamic_retriever(user_query, self.vectordb, context_window=context_window)
             chunks = [doc.page_content for doc in relevant_docs]
             
             # Update conversation history
@@ -488,33 +523,44 @@ class ChatbotService(BaseGenerativeService):
             Pandas DataFrame with the response data
         """
         if params is None:
-            params = {}
+            params = {
+                "add_pdf": False,
+                "get_prompt": False,
+                "set_prompt": False,
+                "reset_history": False,
+                "get_model_info": False
+            }
             
         try:
-            if params.get("add_pdf", False) and 'document' in model_input:
-                result = self.add_pdf(model_input['document'][0])
+            # Return early for various special operations
+            if params.get("get_model_info", False):
+                result = self.get_model_info()
             elif params.get("get_prompt", False):
                 result = self.get_prompt_template()
-            elif params.get("set_prompt", False) and 'prompt' in model_input:
-                result = self.set_prompt_template(model_input['prompt'][0])
+            elif params.get("set_prompt", False) and "prompt" in model_input:
+                result = self.set_prompt_template(model_input["prompt"][0])
             elif params.get("reset_history", False):
                 result = self.reset_history()
-            elif 'query' in model_input:
-                result = self.inference(context, model_input['query'][0])
+            elif params.get("add_pdf", False) and "document" in model_input:
+                result = self.add_pdf(model_input["document"][0])
+            # Standard query operation
+            elif "query" in model_input:
+                result = self.inference(context, model_input["query"][0])
             else:
                 result = {
                     "chunks": [],
                     "history": [],
                     "prompt": self.prompt_str,
-                    "output": "No valid input or operation specified.",
+                    "output": "Error: No valid operation specified in the request.",
                     "success": False
                 }
         except Exception as e:
+            import traceback
             result = {
                 "chunks": [],
                 "history": [],
                 "prompt": self.prompt_str if hasattr(self, 'prompt_str') else "",
-                "output": f"Error processing request: {str(e)}",
+                "output": f"Error: {str(e)}\nTraceback: {traceback.format_exc()}",
                 "success": False
             }
             
@@ -561,7 +607,8 @@ class ChatbotService(BaseGenerativeService):
             ParamSpec("add_pdf", "boolean", False),
             ParamSpec("get_prompt", "boolean", False),
             ParamSpec("set_prompt", "boolean", False),
-            ParamSpec("reset_history", "boolean", False)
+            ParamSpec("reset_history", "boolean", False),
+            ParamSpec("get_model_info", "boolean", False)
         ])
         signature = ModelSignature(inputs=input_schema, outputs=output_schema, params=param_schema)
         
@@ -593,3 +640,38 @@ class ChatbotService(BaseGenerativeService):
             ]
         )
         logger.info("Model and artifacts successfully registered in MLflow.")
+
+    def get_model_info(self):
+        """
+        Get information about the model, including context window size.
+        
+        Returns:
+            Dictionary containing model information
+        """
+        try:
+            context_window = get_context_window(self.llm)
+            model_type = type(self.llm).__name__
+            
+            # Get additional info based on model type
+            additional_info = {}
+            if hasattr(self.llm, 'model_path'):
+                additional_info['model_path'] = self.llm.model_path
+            if hasattr(self.llm, 'repo_id'):
+                additional_info['repo_id'] = self.llm.repo_id
+                
+            return {
+                "chunks": [],
+                "history": [],
+                "prompt": self.prompt_str,
+                "output": f"Model type: {model_type}, Context window: {context_window} tokens",
+                "additional_info": additional_info,
+                "success": True
+            }
+        except Exception as e:
+            return {
+                "chunks": [],
+                "history": [],
+                "prompt": self.prompt_str,
+                "output": f"Error retrieving model info: {str(e)}",
+                "success": False
+            }
