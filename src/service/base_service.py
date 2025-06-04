@@ -165,46 +165,22 @@ class BaseGenerativeService(PythonModel):
                 timeout=10
             )
             
-            # Create a custom wrapper function to handle the chain invocation properly
-            def protected_chain_wrapper(inputs, **kwargs):
-                # Ensure the input is properly structured 
-                if not isinstance(inputs, dict):
-                    # Convert to dict if it's not already
-                    inputs = {"context": str(inputs)}
-                
-                # Get the result from the original chain - this does the actual text processing
-                try:
-                    # Run the main chain to get the summary
-                    chain_result = self.chain.invoke(inputs, **kwargs)
-                    
-                    # Extract the input text for the protection tool
-                    input_text = str(inputs.get("context", "")) if isinstance(inputs, dict) else str(inputs)
-                    
-                    # Apply protection
-                    try:
-                        protected_result = self.protect_tool.invoke({
-                            "input": input_text,
-                            "output": chain_result
-                        })
-                        
-                        # Check if protection was applied and protection returned a dict
-                        if isinstance(protected_result, dict) and protected_result.get("overridden", False):
-                            return protected_result.get("override", "Content blocked by protection rules")
-                        else:
-                            # If protection didn't trigger or returned unexpected format, use original result
-                            return chain_result
-                    except Exception as protect_error:
-                        logger.error(f"Error in protection: {str(protect_error)}")
-                        # If protection fails, return the chain result
-                        return chain_result
-                except Exception as chain_error:
-                    logger.error(f"Error in main chain: {str(chain_error)}")
-                    # If the main chain fails, we can't proceed
-                    raise
+            # Create a wrapper to handle input conversion for the protect tool
+            from langchain_core.runnables import RunnableLambda
             
-            # Create a custom chain object that wraps the original chain with protection
-            from langchain_core.runnables import RunnablePassthrough
-            self.protected_chain = RunnablePassthrough(protected_chain_wrapper)
+            def input_adapter(inputs):
+                # Extract the text from the dictionary format our chain uses
+                if isinstance(inputs, dict) and "context" in inputs:
+                    return inputs["context"]
+                return inputs
+            
+            # Create a chain that properly handles the input format conversion
+            input_converter = RunnableLambda(input_adapter)
+            protected_tool = input_converter | self.protect_tool
+            
+            # Set up protection parser and chain
+            protect_parser = ProtectParser(chain=self.chain)
+            self.protected_chain = protected_tool | protect_parser.parser
             
             logger.info("Galileo Protect setup successfully.")
         except Exception as e:

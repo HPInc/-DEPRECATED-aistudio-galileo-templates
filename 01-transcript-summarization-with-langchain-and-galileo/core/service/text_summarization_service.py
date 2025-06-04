@@ -259,20 +259,18 @@ class TextSummarizationService(BaseGenerativeService):
             
             # Run the input through the protection chain with monitoring
             result = self.protected_chain.invoke(
-                {"context": text}, 
-                config={"callbacks": [self.monitor_handler]}
+                {
+                    "input": {"context": text},
+                    "config": {"callbacks": [self.monitor_handler]}
+                }
             )
             
             logger.info("Successfully processed summarization request")
             
             # Handle different result formats based on what the chain returns
             if isinstance(result, dict):
-                # If we're getting back a dictionary with our original input, use direct chain instead
-                if "context" in result and result["context"] == text:
-                    logger.warning("Protected chain returned input without processing, using direct chain")
-                    summary = self.chain.invoke({"context": text})
                 # Handle predictions format
-                elif "predictions" in result and len(result["predictions"]) > 0:
+                if "predictions" in result and len(result["predictions"]) > 0:
                     if "summary" in result["predictions"][0]:
                         summary = result["predictions"][0]["summary"]
                     else:
