@@ -167,34 +167,51 @@ class BaseGenerativeService(PythonModel):
             
             # Create a custom wrapper function to handle the chain invocation properly
             def protected_chain_wrapper(inputs, **kwargs):
+                # Log the input type for debugging
+                logger.info(f"Protected chain received input type: {type(inputs)} - {str(inputs)[:50]}...")
+                
                 # Ensure the input is properly structured for the protect tool
                 # This avoids the Pydantic validation error
-                if not hasattr(inputs, 'get') and isinstance(inputs, dict):
-                    # Already a dict, pass it through
-                    return self.chain.invoke(inputs, **kwargs)
+                if not isinstance(inputs, dict):
+                    logger.warning(f"Input is not a dict, it's {type(inputs)}")
+                    # Convert to dict if it's not already
+                    inputs = {"context": str(inputs)}
                 
-                # Get the result from the original chain
-                chain_result = self.chain.invoke(inputs, **kwargs)
-                
-                # Extract the input text - when payload expects strings, not dictionaries
-                input_text = str(inputs.get("context", "")) if isinstance(inputs, dict) else str(inputs)
-                
-                # Apply protection
+                # Get the result from the original chain - this does the actual text processing
                 try:
-                    protected_result = self.protect_tool.invoke({
-                        "input": input_text,
-                        "output": chain_result
-                    })
+                    logger.info(f"Invoking main chain with: {str(inputs)[:50]}...")
+                    chain_result = self.chain.invoke(inputs, **kwargs)
+                    logger.info(f"Main chain produced result of type: {type(chain_result)}")
+                    logger.info(f"Chain result sample: {str(chain_result)[:50]}...")
                     
-                    # Check if protection was applied - make sure protected_result is a dict
-                    if isinstance(protected_result, dict) and protected_result.get("overridden", False):
-                        return protected_result.get("override", "Content blocked by protection rules")
-                    else:
+                    # Extract the input text - for protection tool
+                    input_text = str(inputs.get("context", "")) if isinstance(inputs, dict) else str(inputs)
+                    
+                    # Apply protection
+                    try:
+                        logger.info("Invoking protection tool")
+                        protected_result = self.protect_tool.invoke({
+                            "input": input_text,
+                            "output": chain_result
+                        })
+                        logger.info(f"Protection result type: {type(protected_result)}")
+                        
+                        # Check if protection was applied
+                        if isinstance(protected_result, dict) and protected_result.get("overridden", False):
+                            logger.info("Content was overridden by protection rules")
+                            return protected_result.get("override", "Content blocked by protection rules")
+                        else:
+                            # Important: return the chain result (summary), not the input
+                            logger.info("No protection applied, returning chain result")
+                            return chain_result
+                    except Exception as protect_error:
+                        logger.error(f"Error in protection: {str(protect_error)}")
+                        # If protection fails, return the chain result (summary), not the input
                         return chain_result
-                except Exception as e:
-                    logger.error(f"Error in protection chain: {str(e)}")
-                    # If protection fails, return the original result
-                    return chain_result
+                except Exception as chain_error:
+                    logger.error(f"Error in main chain: {str(chain_error)}")
+                    # If the main chain fails, we can't proceed
+                    raise
             
             # Create a custom chain object that wraps the original chain with protection
             from langchain_core.runnables import RunnablePassthrough
