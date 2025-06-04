@@ -165,9 +165,33 @@ class BaseGenerativeService(PythonModel):
                 timeout=10
             )
             
-            # Set up protection parser and chain
-            protect_parser = ProtectParser(chain=self.chain)
-            self.protected_chain = self.protect_tool | protect_parser.parser
+            # Create a custom wrapper function to handle the chain invocation properly
+            def protected_chain_wrapper(inputs, **kwargs):
+                # Ensure the input is properly structured for the protect tool
+                # This avoids the Pydantic validation error
+                if not hasattr(inputs, 'get') and isinstance(inputs, dict):
+                    # Already a dict, pass it through
+                    return self.chain.invoke(inputs, **kwargs)
+                
+                # Get the result from the original chain
+                chain_result = self.chain.invoke(inputs, **kwargs)
+                
+                # Apply protection
+                protected_result = self.protect_tool.invoke({
+                    "input": inputs,
+                    "output": chain_result
+                })
+                
+                # Check if protection was applied
+                if protected_result.get("overridden", False):
+                    return protected_result.get("override", "Content blocked by protection rules")
+                else:
+                    return chain_result
+            
+            # Create a custom chain object that wraps the original chain with protection
+            from langchain_core.runnables import RunnablePassthrough
+            self.protected_chain = RunnablePassthrough(protected_chain_wrapper)
+            
             logger.info("Galileo Protect setup successfully.")
         except Exception as e:
             logger.error(f"Failed to set up Galileo Protect: {str(e)}")
