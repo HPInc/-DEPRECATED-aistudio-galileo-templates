@@ -209,9 +209,16 @@ class TextSummarizationService(BaseGenerativeService):
         Returns:
             Dictionary with the summary in a "summary" field
         """
-        text = model_input["text"][0]
         try:
             logger.info("Processing summarization request")
+            # Extract text from model input
+            if "text" not in model_input or not model_input["text"]:
+                logger.error("No text provided in model_input")
+                raise ValueError("No text provided for summarization")
+            
+            text = model_input["text"][0]
+            logger.info(f"Received text for summarization (length: {len(text)})")
+            
             # Run the input through the protection chain with monitoring
             result = self.protected_chain.invoke(
                 {"context": text}, 
@@ -219,16 +226,24 @@ class TextSummarizationService(BaseGenerativeService):
             )
             logger.info("Successfully processed summarization request")
             
-            if isinstance(result, dict) and "predictions" in result and len(result["predictions"]) > 0:
-                if "summary" in result["predictions"][0]:
-                    summary = result["predictions"][0]["summary"]
-                    logger.info("Extracted summary from predictions array")
+            # Handle different result formats based on what the chain returns
+            if isinstance(result, dict):
+                if "predictions" in result and len(result["predictions"]) > 0:
+                    if "summary" in result["predictions"][0]:
+                        summary = result["predictions"][0]["summary"]
+                        logger.info("Extracted summary from predictions array")
+                    else:
+                        logger.warning("Found predictions array but no summary field")
+                        summary = str(result)
+                elif "override" in result:
+                    summary = result["override"]
+                    logger.warning("Content was overridden by protection rules")
                 else:
-                    logger.warning("Found predictions array but no summary field")
+                    logger.warning("Unexpected result format, using string representation")
                     summary = str(result)
             else:
                 # Use the result directly if it's a string or other format
-                summary = result
+                summary = str(result)
                 
             logger.info(f"Summary extraction completed, type: {type(summary)}")
             
