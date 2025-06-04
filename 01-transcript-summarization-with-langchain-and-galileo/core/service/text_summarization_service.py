@@ -204,20 +204,42 @@ class TextSummarizationService(BaseGenerativeService):
         
         Args:
             context: MLflow model context
-            model_input: Input data for summarization, expecting a "text" field
+            model_input: Input data for summarization in MLflow format:
+                         - A dict with "inputs" containing a "text" field
+                         Example: {"inputs": {"text": ["content to summarize"]}}
             
         Returns:
-            Dictionary with the summary in a "summary" field
+            DataFrame with the summary in a "summary" field
         """
         try:
             logger.info("Processing summarization request")
-            # Extract text from model input
-            if "text" not in model_input or not model_input["text"]:
-                logger.error("No text provided in model_input")
-                raise ValueError("No text provided for summarization")
             
-            text = model_input["text"][0]
-            logger.info(f"Received text for summarization (length: {len(text)})")
+            # Extract inputs from MLflow format
+            if "inputs" not in model_input or not isinstance(model_input["inputs"], dict):
+                logger.error("Invalid input format: missing 'inputs' field")
+                raise ValueError("Input must be in MLflow format with 'inputs' field")
+                
+            input_data = model_input["inputs"]
+                
+            # Extract text from input data
+            if "text" not in input_data:
+                logger.error("No text field provided in input data")
+                raise ValueError("No text field provided for summarization")
+            
+            # Handle pandas Series/DataFrame or regular list/string
+            if hasattr(input_data["text"], "iloc"):
+                if input_data["text"].empty:
+                    logger.error("Empty text Series/DataFrame provided")
+                    raise ValueError("Empty text provided for summarization")
+                text = input_data["text"].iloc[0]
+            else:
+                # Handle regular list or string input
+                if not input_data["text"]:
+                    logger.error("Empty text provided in input data")
+                    raise ValueError("Empty text provided for summarization")
+                text = input_data["text"][0] if isinstance(input_data["text"], list) else input_data["text"]
+            
+            logger.info(f"Received text for summarization (length: {len(str(text))})")
             
             # Run the input through the protection chain with monitoring
             result = self.protected_chain.invoke(
