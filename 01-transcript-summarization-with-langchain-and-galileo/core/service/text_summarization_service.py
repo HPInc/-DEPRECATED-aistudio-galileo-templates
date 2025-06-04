@@ -199,18 +199,9 @@ class TextSummarizationService(BaseGenerativeService):
         try:
             logger.info("Setting up the summarization chain")
             self.chain = self.prompt | self.llm | StrOutputParser()
-            logger.info(f"Chain created with components: {type(self.prompt).__name__} | {type(self.llm).__name__} | StrOutputParser")
-            
-            # Test chain with a small input to verify it works
-            try:
-                test_result = self.chain.invoke({"context": "This is a test."})
-                logger.info(f"Chain test successful. Output type: {type(test_result)}")
-                logger.info(f"Chain test output sample: {str(test_result)[:50]}...")
-            except Exception as e:
-                logger.error(f"Chain test failed: {str(e)}")
+            logger.info("Summarization chain created successfully")
         except Exception as e:
             logger.error(f"Error creating summarization chain: {str(e)}")
-            logger.error(f"Exception type: {type(e).__name__}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
@@ -267,52 +258,36 @@ class TextSummarizationService(BaseGenerativeService):
             logger.info(f"Received text for summarization (length: {len(str(text))})")
             
             # Run the input through the protection chain with monitoring
-            logger.info("Invoking protected_chain with text input")
-            try:
-                result = self.protected_chain.invoke(
-                    {"context": text}, 
-                    config={"callbacks": [self.monitor_handler]}
-                )
-                logger.info(f"Protected chain result type: {type(result)}")
-                logger.info(f"Protected chain result preview: {str(result)[:100]}...")
-                
-                # The chain result should be the actual summary text
-                # If we're getting back a dictionary with our original input, something is wrong
-                if isinstance(result, dict) and "context" in result and result["context"] == text:
-                    logger.error("Chain returned original input instead of processing it")
-                    # Try direct chain invocation as fallback
+            result = self.protected_chain.invoke(
+                {"context": text}, 
+                config={"callbacks": [self.monitor_handler]}
+            )
+            
+            logger.info("Successfully processed summarization request")
+            
+            # Handle different result formats based on what the chain returns
+            if isinstance(result, dict):
+                # If we're getting back a dictionary with our original input, use direct chain instead
+                if "context" in result and result["context"] == text:
+                    logger.warning("Protected chain returned input without processing, using direct chain")
                     summary = self.chain.invoke({"context": text})
-                    logger.info(f"Direct chain invocation result: {summary[:100]}...")
-                else:
-                    logger.info("Successfully processed summarization request")
-                    # Handle different result formats based on what the chain returns
-                    if isinstance(result, dict):
-                        if "predictions" in result and len(result["predictions"]) > 0:
-                            if "summary" in result["predictions"][0]:
-                                summary = result["predictions"][0]["summary"]
-                                logger.info("Extracted summary from predictions array")
-                            else:
-                                logger.warning("Found predictions array but no summary field")
-                                summary = str(result)
-                        elif "override" in result:
-                            summary = result["override"]
-                            logger.warning("Content was overridden by protection rules")
-                        else:
-                            logger.warning("Unexpected result format, using string representation")
-                            summary = str(result)
+                # Handle predictions format
+                elif "predictions" in result and len(result["predictions"]) > 0:
+                    if "summary" in result["predictions"][0]:
+                        summary = result["predictions"][0]["summary"]
                     else:
-                        # Use the result directly if it's a string or other format
                         summary = str(result)
-            except Exception as chain_error:
-                logger.error(f"Error invoking protection chain: {str(chain_error)}")
-                logger.error(f"Attempting direct chain invocation as fallback")
-                try:
-                    # Try direct chain as fallback
-                    summary = self.chain.invoke({"context": text})
-                    logger.info(f"Direct chain fallback successful, result: {summary[:100]}...")
-                except Exception as fallback_error:
-                    logger.error(f"Fallback also failed: {str(fallback_error)}")
-                    summary = f"Error processing request: {str(chain_error)}"
+                # Handle protection override
+                elif "override" in result:
+                    summary = result["override"]
+                # Fallback
+                else:
+                    summary = str(result)
+            else:
+                # Use the result directly if it's a string or other format
+                summary = str(result)
+                
+            logger.info(f"Summary extraction completed, type: {type(summary)}")
         
         except Exception as e:
             error_message = f"Error processing summarization request: {str(e)}"
