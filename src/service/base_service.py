@@ -180,15 +180,20 @@ class BaseGenerativeService(PythonModel):
                 input_text = str(inputs.get("context", "")) if isinstance(inputs, dict) else str(inputs)
                 
                 # Apply protection
-                protected_result = self.protect_tool.invoke({
-                    "input": input_text,
-                    "output": chain_result
-                })
-                
-                # Check if protection was applied
-                if protected_result.get("overridden", False):
-                    return protected_result.get("override", "Content blocked by protection rules")
-                else:
+                try:
+                    protected_result = self.protect_tool.invoke({
+                        "input": input_text,
+                        "output": chain_result
+                    })
+                    
+                    # Check if protection was applied - make sure protected_result is a dict
+                    if isinstance(protected_result, dict) and protected_result.get("overridden", False):
+                        return protected_result.get("override", "Content blocked by protection rules")
+                    else:
+                        return chain_result
+                except Exception as e:
+                    logger.error(f"Error in protection chain: {str(e)}")
+                    # If protection fails, return the original result
                     return chain_result
             
             # Create a custom chain object that wraps the original chain with protection
