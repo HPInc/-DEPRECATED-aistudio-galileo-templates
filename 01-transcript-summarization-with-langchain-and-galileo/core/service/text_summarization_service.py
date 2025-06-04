@@ -204,24 +204,32 @@ class TextSummarizationService(BaseGenerativeService):
         
         Args:
             context: MLflow model context
-            model_input: Input data for summarization in MLflow format:
-                         - A dict with "inputs" containing a "text" field
-                         Example: {"inputs": {"text": ["content to summarize"]}}
+            model_input: Input data for summarization in one of these formats:
+                         1. MLflow API format: {"inputs": {"text": ["content"]}}
+                         2. Direct API format: {"text": ["content"]}
+                         3. MLflow batch inference format: {"text": ["content"]}
             
         Returns:
             DataFrame with the summary in a "summary" field
         """
         try:
             logger.info("Processing summarization request")
+            logger.info(f"Model input keys: {list(model_input.keys()) if isinstance(model_input, dict) else 'not a dict'}")
             
-            # Extract inputs from MLflow format
-            if "inputs" not in model_input or not isinstance(model_input["inputs"], dict):
-                logger.error("Invalid input format: missing 'inputs' field")
-                raise ValueError("Input must be in MLflow format with 'inputs' field")
+            # Normalize input format - support both direct and MLflow wrapped formats
+            if "inputs" in model_input and isinstance(model_input["inputs"], dict):
+                # Standard MLflow API format with inputs wrapper
+                logger.info("Detected MLflow API format with 'inputs' wrapper")
+                input_data = model_input["inputs"]
+            elif "text" in model_input:
+                # Direct format without inputs wrapper
+                logger.info("Detected direct API format without 'inputs' wrapper")
+                input_data = model_input
+            else:
+                logger.error(f"Unknown input format. Available keys: {list(model_input.keys())}")
+                raise ValueError("Input must contain either 'inputs.text' or 'text' field")
                 
-            input_data = model_input["inputs"]
-                
-            # Extract text from input data
+            # Extract text from normalized input_data
             if "text" not in input_data:
                 logger.error("No text field provided in input data")
                 raise ValueError("No text field provided for summarization")
