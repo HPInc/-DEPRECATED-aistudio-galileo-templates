@@ -176,9 +176,12 @@ class BaseGenerativeService(PythonModel):
                 # Get the result from the original chain
                 chain_result = self.chain.invoke(inputs, **kwargs)
                 
+                # Extract the input text - when payload expects strings, not dictionaries
+                input_text = str(inputs.get("context", "")) if isinstance(inputs, dict) else str(inputs)
+                
                 # Apply protection
                 protected_result = self.protect_tool.invoke({
-                    "input": inputs,
+                    "input": input_text,
                     "output": chain_result
                 })
                 
