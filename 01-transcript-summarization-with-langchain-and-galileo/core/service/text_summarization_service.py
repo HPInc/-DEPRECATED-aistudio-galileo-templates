@@ -196,15 +196,7 @@ class TextSummarizationService(BaseGenerativeService):
 
     def load_chain(self) -> None:
         """Create the summarization chain using the loaded model and prompt."""
-        try:
-            logger.info("Setting up the summarization chain")
-            self.chain = self.prompt | self.llm | StrOutputParser()
-            logger.info("Summarization chain created successfully")
-        except Exception as e:
-            logger.error(f"Error creating summarization chain: {str(e)}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            raise
+        self.chain = self.prompt | self.llm | StrOutputParser()
     
     def predict(self, context, model_input):
         """
@@ -222,40 +214,7 @@ class TextSummarizationService(BaseGenerativeService):
         """
         try:
             logger.info("Processing summarization request")
-            logger.info(f"Model input keys: {list(model_input.keys()) if isinstance(model_input, dict) else 'not a dict'}")
-            
-            # Normalize input format - support both direct and MLflow wrapped formats
-            if "inputs" in model_input and isinstance(model_input["inputs"], dict):
-                # Standard MLflow API format with inputs wrapper
-                logger.info("Detected MLflow API format with 'inputs' wrapper")
-                input_data = model_input["inputs"]
-            elif "text" in model_input:
-                # Direct format without inputs wrapper
-                logger.info("Detected direct API format without 'inputs' wrapper")
-                input_data = model_input
-            else:
-                logger.error(f"Unknown input format. Available keys: {list(model_input.keys())}")
-                raise ValueError("Input must contain either 'inputs.text' or 'text' field")
-                
-            # Extract text from normalized input_data
-            if "text" not in input_data:
-                logger.error("No text field provided in input data")
-                raise ValueError("No text field provided for summarization")
-            
-            # Handle pandas Series/DataFrame or regular list/string
-            if hasattr(input_data["text"], "iloc"):
-                if input_data["text"].empty:
-                    logger.error("Empty text Series/DataFrame provided")
-                    raise ValueError("Empty text provided for summarization")
-                text = input_data["text"].iloc[0]
-            else:
-                # Handle regular list or string input
-                if not input_data["text"]:
-                    logger.error("Empty text provided in input data")
-                    raise ValueError("Empty text provided for summarization")
-                text = input_data["text"][0] if isinstance(input_data["text"], list) else input_data["text"]
-            
-            logger.info(f"Received text for summarization (length: {len(str(text))})")
+            text = model_input["text"][0]
             
             # Run the input through the protection chain with monitoring
             result = self.protected_chain.invoke(
