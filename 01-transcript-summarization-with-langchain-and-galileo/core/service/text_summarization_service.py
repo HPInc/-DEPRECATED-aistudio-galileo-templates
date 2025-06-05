@@ -134,7 +134,7 @@ class TextSummarizationService(BaseGenerativeService):
         """
         try:
             logger.info("Loading local Hugging Face model")
-            model_id = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+            model_id = "meta-llama/Llama-3.2-3B-Instruct"
             logger.info(f"Using model_id: {model_id}")
             
             logger.info("Loading tokenizer...")
@@ -147,7 +147,7 @@ class TextSummarizationService(BaseGenerativeService):
             pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=100, device=0)
             
             self.llm = HuggingFacePipeline(pipeline=pipe)
-            logger.info("Using the local Deep Seek model downloaded from HuggingFace.")
+            logger.info("Using the local Llama 3b downloaded from HuggingFace.")
         except Exception as e:
             logger.error(f"Error in load_local_hf_model: {str(e)}")
             logger.error(f"Exception type: {type(e).__name__}")
@@ -171,7 +171,7 @@ class TextSummarizationService(BaseGenerativeService):
             logger.info("Initializing HuggingFaceEndpoint with Mistral-7B model")
             self.llm = HuggingFaceEndpoint(
                 huggingfacehub_api_token=self.model_config["hf_key"],
-                repo_id="mistralai/Mistral-7B-Instruct-v0.2",
+                repo_id="mistralai/Mistral-7B-Instruct-v0.3",
             )
             logger.info("Using the cloud Mistral model on HuggingFace.")
         except Exception as e:
@@ -301,6 +301,7 @@ class TextSummarizationService(BaseGenerativeService):
             pip_requirements=[
                 "galileo-protect==0.15.1",
                 "galileo-observe==1.13.2",
+                "langchain-huggingface==0.2.0",
                 "pyyaml",
                 "pandas",
                 "sentence-transformers",
