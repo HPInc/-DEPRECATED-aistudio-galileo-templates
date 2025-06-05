@@ -168,11 +168,27 @@ class BaseGenerativeService(PythonModel):
             # Create a wrapper to handle input conversion for the protect tool
             from langchain_core.runnables import RunnableLambda
             
-            def input_adapter(inputs):
-                # Extract the text from the dictionary format our chain uses
-                if isinstance(inputs, dict) and "context" in inputs:
-                    return inputs["context"]
-                return inputs
+            def input_adapter(chain_input_data):
+                # chain_input_data is the actual input passed to this runnable,
+                # e.g., {"context": "some text"} from TextSummarizationService.
+                text_to_protect = ""
+                if isinstance(chain_input_data, dict) and "context" in chain_input_data:
+                    # This is the primary expected path.
+                    text_to_protect = chain_input_data["context"]
+                elif isinstance(chain_input_data, str):
+                    # If the input is already a string, use it directly.
+                    text_to_protect = chain_input_data
+                else:
+                    # Fallback for unexpected input types.
+                    logger.warning(
+                        f"input_adapter received an unexpected input structure: {type(chain_input_data)}. "
+                        "Attempting to convert to string. Ensure the input to ProtectTool is a simple text string."
+                    )
+                    text_to_protect = str(chain_input_data)
+                
+                # ProtectTool's args_schema (PayloadV1) expects a field "input" of type str.
+                # So, we must return a dictionary with this structure.
+                return {"input": text_to_protect}
             
             # Create a chain that properly handles the input format conversion
             input_converter = RunnableLambda(input_adapter)
