@@ -204,10 +204,7 @@ class TextSummarizationService(BaseGenerativeService):
         
         Args:
             context: MLflow model context
-            model_input: Input data for summarization in one of these formats:
-                         1. MLflow API format: {"inputs": {"text": ["content"]}}
-                         2. Direct API format: {"text": ["content"]}
-                         3. MLflow batch inference format: {"text": ["content"]}
+            model_input: Input data for summarization, expecting a "text" field
             
         Returns:
             DataFrame with the summary in a "summary" field
