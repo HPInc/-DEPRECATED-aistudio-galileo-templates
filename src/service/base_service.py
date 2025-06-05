@@ -168,6 +168,7 @@ class BaseGenerativeService(PythonModel):
             # Set up protection parser and chain
             protect_parser = ProtectParser(chain=self.chain)
             self.protected_chain = self.protect_tool | protect_parser.parser
+            
             logger.info("Galileo Protect setup successfully.")
         except Exception as e:
             logger.error(f"Failed to set up Galileo Protect: {str(e)}")

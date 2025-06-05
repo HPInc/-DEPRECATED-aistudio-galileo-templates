@@ -155,7 +155,7 @@ def initialize_llm(
     # Initialize based on model source
     if model_source == "hugging-face-cloud":
         if hf_repo_id == "":
-            repo_id = DEFAULT_MODELS["model_source"]
+            repo_id = DEFAULT_MODELS["hugging-face-cloud"]
         else:
             repo_id = hf_repo_id  
         if not secrets or "HUGGINGFACE_API_KEY" not in secrets:
@@ -173,6 +173,8 @@ def initialize_llm(
 
     elif model_source == "hugging-face-local":
         from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+        if "HUGGINGFACE_API_KEY" in secrets:
+            os.environ["HF_TOKEN"] = secrets["HUGGINGFACE_API_KEY"]
         if hf_repo_id == "":
             model_id = DEFAULT_MODELS["hugging-face-local"]
         else:
