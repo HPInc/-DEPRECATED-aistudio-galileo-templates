@@ -227,17 +227,10 @@ class TextSummarizationService(BaseGenerativeService):
             logger.info("Successfully processed summarization request")
             
             # Handle different result formats based on what the chain returns
-            if isinstance(result, dict):
-                # Handle predictions format
-                if "predictions" in result and len(result["predictions"]) > 0:
-                    if "summary" in result["predictions"][0]:
-                        summary = result["predictions"][0]["summary"]
-                    else:
-                        summary = str(result)
-                # Handle protection override
-                elif "override" in result:
-                    summary = result["override"]
-                # Fallback
+            if isinstance(result, dict) and "predictions" in result and len(result["predictions"]) > 0:
+                if "summary" in result["predictions"][0]:
+                    summary = result["predictions"][0]["summary"]
+                    logger.info("Extracted summary from predictions array")
                 else:
                     summary = str(result)
             else:
