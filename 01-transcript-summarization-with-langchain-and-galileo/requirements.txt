@@ -1,1 +1,2 @@
 webvtt-py==0.5.1
+langchain-huggingface==0.2.0
