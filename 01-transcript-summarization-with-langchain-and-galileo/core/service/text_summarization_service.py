@@ -133,6 +133,8 @@ class TextSummarizationService(BaseGenerativeService):
             context: MLflow model context containing artifacts
         """
         try:
+            if self.model_config["hf_key"] != "" :
+                os.environ["HF_TOKEN"] = self.model_config["hf_key"]
             logger.info("Loading local Hugging Face model")
             model_id = "meta-llama/Llama-3.2-3B-Instruct"
             logger.info(f"Using model_id: {model_id}")
@@ -186,10 +188,12 @@ class TextSummarizationService(BaseGenerativeService):
         self.prompt_str = '''
             The following text is an excerpt of a transcription:
 
-            ### 
-            {context} 
             ###
-
+            
+            {context} 
+            
+            ###
+            
             Please, summarize this transcription, in a concise and comprehensive manner.
             '''
         self.prompt = ChatPromptTemplate.from_template(self.prompt_str)
@@ -215,10 +219,8 @@ class TextSummarizationService(BaseGenerativeService):
             
             # Run the input through the protection chain with monitoring
             result = self.protected_chain.invoke(
-                {
-                    "input": {"context": text},
-                    "config": {"callbacks": [self.monitor_handler]}
-                }
+                {"input": text, "output": ""},
+                config={"callbacks": [self.monitor_handler]}
             )
             
             logger.info("Successfully processed summarization request")
